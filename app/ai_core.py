@@ -1,167 +1,145 @@
 # app/ai_core.py
 import os
-from dotenv import load_dotenv
-from crewai import Agent, Task, Crew, Process
-from langchain_openai import AzureChatOpenAI
-from crewai_tools import SerperDevTool, ScrapeWebsiteTool
-
-# Load environment variables from .env file
-load_dotenv()
-
-os.environ["OPENAI_MODEL_NAME"] = "azure/gpt-5-chat"
-
-search_tool = SerperDevTool()
-scrape_tool = ScrapeWebsiteTool()
-
-# 1. Define the Agents
-# -------------------
-
-researcher_agent = Agent(
-    role='Senior Business Researcher',
-    goal='Find and analyze the latest news, projects, and professional background of a person.',
-    backstory=(
-        "You are an expert researcher with a knack for digging up relevant "
-        "and up-to-date information on individuals and their companies. "
-        "You are a master of web searches and can quickly synthesize data from various sources."
-    ),
-    tools=[search_tool, scrape_tool],
-    verbose=True,
-    allow_delegation=False,
-)
-
-analyst_agent = Agent(
-    role='Lead Qualification Analyst',
-    goal='Analyze research findings to identify key insights and potential angles for a personalized outreach.',
-    backstory=(
-        "You are a sharp analyst with a deep understanding of B2B sales. "
-        "You can look at a person's professional history and recent company activities "
-        "and pinpoint the most compelling reasons for a conversation."
-    ),
-    verbose=True,
-    allow_delegation=False,
-)
-
-writer_agent = Agent(
-    role='Expert Cold Email Copywriter',
-    goal='Draft a compelling, concise, and highly personalized email to a lead.',
-    backstory=(
-        "You are a renowned copywriter, famous for your ability to craft emails that get replies. "
-        "You avoid generic templates and focus on creating genuine connections by referencing "
-        "specific, relevant details about the recipient."
-    ),
-    verbose=True,
-    allow_delegation=False,
-)
-
-# 2. Define the Tasks
-# --------------------
-# Note: The input variables like {first_name} will be passed in when we run the crew.
-
-research_task = Task(
-  description=(
-    "1. Use the website scraping tool to read the content of the LinkedIn profile URL: {profile_url}. "
-    "2. From the scraped content, identify the person's full name, current company, and professional title. "
-    "3. Use the search tool to find recent news or articles about this specific person and their company. "
-    "4. Summarize their key accomplishments, career moves, and any recent, noteworthy projects."
-  ),
-  expected_output=(
-    "A concise, 3-4 bullet point summary of the most significant and recent findings about the person, based *only* on the information from their specific LinkedIn profile and related news."
-  ),
-  agent=researcher_agent
-)
-
-analysis_task = Task(
-    description=(
-        "Based on the research summary, identify 2-3 key insights or 'hooks'. "
-        "What is the most compelling, recent event or achievement we could mention? "
-        "Is it a new project? A company milestone? A recent promotion? "
-        "Formulate these as talking points for an email."
-    ),
-    expected_output=(
-        "A short paragraph outlining the primary angle for outreach, followed by 2-3 bullet points "
-        "of the specific talking points to be used in the email."
-    ),
-    agent=analyst_agent
-)
-
-writing_task = Task(
-    description=(
-        "Using the identified talking points, write a short, personalized email to {first_name}. "
-        "The email should be under 150 words. "
-        "It must sound authentic, not like a template. "
-        "Start by mentioning the specific hook/insight. "
-        "End with a clear, low-friction call to action."
-        "Do NOT include a subject line or sign-off like 'Best regards'."
-    ),
-    expected_output=(
-        "The final, ready-to-send email body as a single block of text."
-    ),
-    agent=writer_agent
-)
-
-# 3. Assemble the Crew
-# --------------------
-
-crew = Crew(
-    agents=[researcher_agent, analyst_agent, writer_agent],
-    tasks=[research_task, analysis_task, writing_task],
-    process=Process.sequential,
-    verbose=True
-)
-
-# 4. Create a function to run the crew
-# ------------------------------------
 
 def enrich_lead_with_ai(lead_input: dict) -> dict:
     """
-    Takes lead input data, runs the AI crew, and returns the enriched data.
+    Takes lead input data, builds the AI crew, runs it, and returns the enriched data.
+    All heavy imports and constructions are deferred to avoid startup failures on Azure.
     """
-    print("🤖 Kicking off AI Crew...")
+    # Read flags at call time
+    use_chroma = os.getenv("USE_CHROMA", "false").lower() == "true"
 
-    # The crew.kickoff() method requires a dictionary of inputs.
-    # These keys must match the placeholders in your task descriptions.
+    # Load env lazily only if needed (optional)
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except Exception:
+        pass
+
+    # Azure OpenAI model selection
+    os.environ.setdefault("OPENAI_MODEL_NAME", "azure/gpt-5-chat")
+
+    # Import libraries only when the endpoint is invoked, preventing module-import side effects
+    from crewai import Agent, Task, Crew, Process
+    from crewai_tools import SerperDevTool, ScrapeWebsiteTool
+
+    # If later enabling chroma on Azure, ensure the code path uses a backend that does not require system sqlite
+    # or is completely optional. Do NOT import chromadb here on Azure unless you’ve containerized.
+    if use_chroma:
+        # Example: only import if really required, and prefer non-sqlite config paths in your chroma_loader
+        try:
+            from app.chroma_loader import init_chroma
+            chroma_client = init_chroma()  # duckdb+parquet by default
+        except Exception:
+            chroma_client = None
+    else:
+        chroma_client = None
+
+    # Tools
+    search_tool = SerperDevTool()
+    scrape_tool = ScrapeWebsiteTool()
+
+    # Agents
+    researcher_agent = Agent(
+        role="Senior Business Researcher",
+        goal="Find and analyze the latest news, projects, and professional background of a person.",
+        backstory=(
+            "You are an expert researcher with a knack for digging up relevant and up-to-date information "
+            "on individuals and their companies. You can quickly synthesize data from various sources."
+        ),
+        tools=[search_tool, scrape_tool],
+        verbose=True,
+        allow_delegation=False,
+    )
+
+    analyst_agent = Agent(
+        role="Lead Qualification Analyst",
+        goal="Analyze research findings to identify key insights and potential angles for personalized outreach.",
+        backstory=(
+            "You are a sharp analyst with a deep understanding of B2B sales and can pinpoint compelling hooks."
+        ),
+        verbose=True,
+        allow_delegation=False,
+    )
+
+    writer_agent = Agent(
+        role="Expert Cold Email Copywriter",
+        goal="Draft a concise, highly personalized email to a lead.",
+        backstory=(
+            "You craft emails that get replies, referencing specific, relevant details about the recipient."
+        ),
+        verbose=True,
+        allow_delegation=False,
+    )
+
+    # Tasks
+    research_task = Task(
+        description=(
+            "1. Use the website scraping tool to read the LinkedIn profile URL: {profile_url}. "
+            "2. Identify full name, current company, and professional title from the scraped content. "
+            "3. Use the search tool to find recent news or articles about the person and their company. "
+            "4. Summarize key accomplishments, career moves, and recent noteworthy projects."
+        ),
+        expected_output=(
+            "3-4 bullet points with the most significant recent findings based only on profile and news."
+        ),
+        agent=researcher_agent,
+    )
+
+    analysis_task = Task(
+        description=(
+            "From the research summary, identify 2-3 key insights or hooks with the most compelling angle."
+        ),
+        expected_output=(
+            "One short paragraph with the primary angle, plus 2-3 bullet points of talking points."
+        ),
+        agent=analyst_agent,
+    )
+
+    writing_task = Task(
+        description=(
+            "Using the identified talking points, write a short, personalized email to {first_name} "
+            "under 150 words, authentic tone, mention the hook first, and end with a low-friction CTA. "
+            "Do NOT include subject line or sign-off."
+        ),
+        expected_output="The final email body as a single text block.",
+        agent=writer_agent,
+    )
+
+    crew = Crew(
+        agents=[researcher_agent, analyst_agent, writer_agent],
+        tasks=[research_task, analysis_task, writing_task],
+        process=Process.sequential,
+        verbose=True,
+    )
+
     crew_inputs = {
-        'profile_url': lead_input.get('profile_url'),
-        'first_name': lead_input.get('first_name'),
-        'last_name': lead_input.get('last_name'),
-        'title': lead_input.get('title'),
-        'company': lead_input.get('company')
+        "profile_url": lead_input.get("profile_url"),
+        "first_name": lead_input.get("first_name"),
+        "last_name": lead_input.get("last_name"),
+        "title": lead_input.get("title"),
+        "company": lead_input.get("company"),
     }
 
-    # Run the crew and get the final output
     result = crew.kickoff(inputs=crew_inputs)
 
-    # For now, we assume the final result is the personalized message.
-    # The `crew.kickoff()` result is the output of the LAST task in the sequence.
-
-    # In a real-world scenario, you might want to parse the outputs
-    # from each agent (research, analysis, etc.) which are available
-    # in `crew.usage_metrics` or by structuring tasks differently.
-
     enriched_data = {
-        # For simplicity, we'll just put the final text in a 'raw_ai_output' key.
-        # We will also add a placeholder for structured data.
         "raw_ai_output": result,
-        "structured_summary": "Placeholder for structured data from AI." 
+        "structured_summary": "Placeholder for structured data from AI.",
     }
 
     return {
         "enriched_data": enriched_data,
-        "personalized_message": result
+        "personalized_message": result,
+        "chroma_enabled": bool(chroma_client),
     }
 
-
-# --- Optional: A small test block ---
-if __name__ == '__main__':
-    print("--- Running AI Core Test ---")
+if __name__ == "__main__":
+    # Optional local test
     test_lead = {
-        "profile_url": "https://www.linkedin.com/in/satyanadella/",
-        "first_name": "Satya",
-        "company": "Microsoft"
+        "profile_url": "https://www.linkedin.com/in/someone/",
+        "first_name": "Jane",
+        "company": "ExampleCo"
     }
-    enriched_result = enrich_lead_with_ai(test_lead)
-    print("\n--- AI Crew Finished ---")
-    print("\nPersonalized Message:")
-    print(enriched_result['personalized_message'])
-    print("\nEnriched Data:")
-    print(enriched_result['enriched_data'])
+    out = enrich_lead_with_ai(test_lead)
+    print(out)
