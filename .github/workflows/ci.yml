@@ -29,6 +29,13 @@ jobs:
       - name: Run tests with pytest
         run: |
           pytest
+      
+      - name: Upload artifact for deployment
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-app
+          path: .
+          if-no-files-found: error
 
   deploy:
       runs-on: ubuntu-latest
@@ -55,4 +62,4 @@ jobs:
           id: deploy-to-webapp
           with:
             app-name: 'auto-prospector'
-            slot-name: 'Production'
+            package: '.'
