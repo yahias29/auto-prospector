@@ -12,3 +12,9 @@ __pycache__/
 
 # Secrets
 .env
+
+# Database file
+leads.db
+
+# Executable files
+ngrok.exe
