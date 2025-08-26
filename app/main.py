@@ -26,7 +26,6 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Only initialize Chroma if enabled
 USE_CHROMA = os.getenv("USE_CHROMA", "false").lower() == "true"
 if USE_CHROMA:
     from app.chroma_loader import init_chroma
