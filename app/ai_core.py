@@ -2,107 +2,76 @@
 import os
 
 def enrich_lead_with_ai(lead_input: dict) -> dict:
-    """
-    Takes lead input data, builds the AI crew, runs it, and returns the enriched data.
-    All heavy imports and constructions are deferred to avoid startup failures on Azure.
-    """
-    # Read flags at call time
-    use_chroma = os.getenv("USE_CHROMA", "false").lower() == "true"
-
-    # Load env lazily only if needed (optional)
+    # Load env when needed
     try:
         from dotenv import load_dotenv
         load_dotenv()
     except Exception:
         pass
 
-    # Azure OpenAI model selection
     os.environ.setdefault("OPENAI_MODEL_NAME", "azure/gpt-5-chat")
 
-    # Import libraries only when the endpoint is invoked, preventing module-import side effects
+    # Deferred imports to avoid startup-time failures
     from crewai import Agent, Task, Crew, Process
     from crewai_tools import SerperDevTool, ScrapeWebsiteTool
 
-    # If later enabling chroma on Azure, ensure the code path uses a backend that does not require system sqlite
-    # or is completely optional. Do NOT import chromadb here on Azure unless you’ve containerized.
+    # Optional: only enable chroma if flag true AND platform supports it
+    use_chroma = os.getenv("USE_CHROMA", "false").lower() == "true"
+    chroma_client = None
     if use_chroma:
-        # Example: only import if really required, and prefer non-sqlite config paths in your chroma_loader
         try:
-            from app.chroma_loader import init_chroma
-            chroma_client = init_chroma()  # duckdb+parquet by default
+            from app.chroma_loader import init_chroma  # this defaults to duckdb+parquet
+            chroma_client = init_chroma()
         except Exception:
-            chroma_client = None
-    else:
-        chroma_client = None
+            chroma_client = None  # proceed without chroma
 
-    # Tools
     search_tool = SerperDevTool()
     scrape_tool = ScrapeWebsiteTool()
 
-    # Agents
     researcher_agent = Agent(
         role="Senior Business Researcher",
-        goal="Find and analyze the latest news, projects, and professional background of a person.",
-        backstory=(
-            "You are an expert researcher with a knack for digging up relevant and up-to-date information "
-            "on individuals and their companies. You can quickly synthesize data from various sources."
-        ),
+        goal="Find and analyze latest news and background.",
+        backstory="Expert researcher synthesizing data quickly.",
         tools=[search_tool, scrape_tool],
         verbose=True,
         allow_delegation=False,
     )
-
     analyst_agent = Agent(
         role="Lead Qualification Analyst",
-        goal="Analyze research findings to identify key insights and potential angles for personalized outreach.",
-        backstory=(
-            "You are a sharp analyst with a deep understanding of B2B sales and can pinpoint compelling hooks."
-        ),
+        goal="Identify key insights and hooks.",
+        backstory="Understands B2B sales and compelling angles.",
         verbose=True,
         allow_delegation=False,
     )
-
     writer_agent = Agent(
         role="Expert Cold Email Copywriter",
-        goal="Draft a concise, highly personalized email to a lead.",
-        backstory=(
-            "You craft emails that get replies, referencing specific, relevant details about the recipient."
-        ),
+        goal="Draft a concise, personalized email.",
+        backstory="Writes emails that get replies.",
         verbose=True,
         allow_delegation=False,
     )
 
-    # Tasks
     research_task = Task(
         description=(
-            "1. Use the website scraping tool to read the LinkedIn profile URL: {profile_url}. "
-            "2. Identify full name, current company, and professional title from the scraped content. "
-            "3. Use the search tool to find recent news or articles about the person and their company. "
-            "4. Summarize key accomplishments, career moves, and recent noteworthy projects."
+            "1. Scrape LinkedIn: {profile_url}. "
+            "2. Extract name, company, title. "
+            "3. Search recent news about the person/company. "
+            "4. Summarize notable accomplishments and projects."
         ),
-        expected_output=(
-            "3-4 bullet points with the most significant recent findings based only on profile and news."
-        ),
+        expected_output="3-4 bullets with the most significant recent findings.",
         agent=researcher_agent,
     )
-
     analysis_task = Task(
-        description=(
-            "From the research summary, identify 2-3 key insights or hooks with the most compelling angle."
-        ),
-        expected_output=(
-            "One short paragraph with the primary angle, plus 2-3 bullet points of talking points."
-        ),
+        description="Identify 2-3 key insights/hooks from the research.",
+        expected_output="One short paragraph plus 2-3 bullet talking points.",
         agent=analyst_agent,
     )
-
     writing_task = Task(
         description=(
-            "Using the identified talking points, write a short, personalized email to {first_name} "
-            "under 150 words, authentic tone, mention the hook first, and end with a low-friction CTA. "
-            "Do NOT include subject line or sign-off."
+            "Write a <150-word personalized email to {first_name}, mention hook first, "
+            "end with a low-friction CTA; no subject or sign-off."
         ),
-        expected_output="The final email body as a single text block.",
+        expected_output="Final email body text.",
         agent=writer_agent,
     )
 
@@ -122,24 +91,12 @@ def enrich_lead_with_ai(lead_input: dict) -> dict:
     }
 
     result = crew.kickoff(inputs=crew_inputs)
-
     enriched_data = {
         "raw_ai_output": result,
         "structured_summary": "Placeholder for structured data from AI.",
     }
-
     return {
         "enriched_data": enriched_data,
         "personalized_message": result,
         "chroma_enabled": bool(chroma_client),
     }
-
-if __name__ == "__main__":
-    # Optional local test
-    test_lead = {
-        "profile_url": "https://www.linkedin.com/in/someone/",
-        "first_name": "Jane",
-        "company": "ExampleCo"
-    }
-    out = enrich_lead_with_ai(test_lead)
-    print(out)
