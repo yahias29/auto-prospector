@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException
 from .models import LeadInput, LeadOutput
 from . import database # Import the database module
 from .ai_core import enrich_lead_with_ai
+import os
 
 app = FastAPI(
     title="Auto-Prospector AI",
@@ -24,6 +25,18 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan
 )
+
+# Only initialize Chroma if enabled
+USE_CHROMA = os.getenv("USE_CHROMA", "false").lower() == "true"
+if USE_CHROMA:
+    from app.chroma_loader import init_chroma
+    chroma_client = init_chroma()
+else:
+    chroma_client = None
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "chroma": bool(chroma_client)}
 
 @app.get("/")
 def read_root():
