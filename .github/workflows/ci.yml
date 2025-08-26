@@ -31,17 +31,28 @@ jobs:
           pytest
 
   deploy:
-    runs-on: ubuntu-latest
-    needs: build-and-test # This line ensures deployment only runs if tests pass
-    if: github.ref == 'refs/heads/main' # This line ensures deployment only runs on the main branch
+      runs-on: ubuntu-latest
+      needs: build
+      permissions:
+        id-token: write #This is required for requesting the JWT
+        contents: read #This is required for actions/checkout
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      steps:
+        - name: Download artifact from build job
+          uses: actions/download-artifact@v4
+          with:
+            name: python-app
+        
+        - name: Login to Azure
+          uses: azure/login@v2
+          with:
+            client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_26165423D99F4FC9822E086003E5C9D7 }}
+            tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_B5E1ED0AAF6D4BB6AB1A29FF7C75E3A3 }}
+            subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_8EE8583DD5304D958A515244D23D1B46 }}
 
-      - name: Deploy to Azure Web App
-        uses: azure/webapps-deploy@v2
-        with:
-          app-name: 'auto-prospector' # your App Service name
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: '.'
+        - name: 'Deploy to Azure Web App'
+          uses: azure/webapps-deploy@v3
+          id: deploy-to-webapp
+          with:
+            app-name: 'auto-prospector'
+            slot-name: 'Production'
