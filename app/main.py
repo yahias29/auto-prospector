@@ -1,6 +1,9 @@
 # app/main.py
 
 import os
+import requests
+import logging  # <-- ADD THIS LINE BACK
+import sys  
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
