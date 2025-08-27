@@ -8,3 +8,4 @@ langchain-openai
 crewai-tools
 pytest
 httpx
+pysqlite3-binary

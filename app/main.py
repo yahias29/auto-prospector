@@ -1,4 +1,7 @@
 # app/main.py
+__import__('pysqlite3')
+import sys
+sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from .models import LeadInput, LeadOutput
