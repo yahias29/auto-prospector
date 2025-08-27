@@ -3,9 +3,9 @@ uvicorn[standard]
 pydantic
 python-dotenv
 sqlalchemy
-crewai
+crewai==0.35.0
+crewai-tools==0.3.0
 langchain-openai
-crewai-tools
 pytest
 httpx
 pysqlite3-binary
