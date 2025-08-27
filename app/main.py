@@ -8,6 +8,9 @@ from .models import LeadInput, LeadOutput
 from . import database # Import the database module
 from .ai_core import enrich_lead_with_ai
 
+import httpx
+
+
 app = FastAPI(
     title="Auto-Prospector AI",
     description="An API for enriching business leads with AI.",
@@ -32,6 +35,38 @@ app = FastAPI(
 def read_root():
     """A simple endpoint to confirm the API is running."""
     return {"status": "API is running"}
+
+# TEMPORARY TEST ENDPOINT
+@app.get("/test-serper")
+async def test_serper_connection():
+    """
+    A simple endpoint to test the outbound connection to the Serper API.
+    """
+    serper_key = os.getenv("SERPER_API_KEY")
+    if not serper_key:
+        raise HTTPException(status_code=500, detail="SERPER_API_KEY is not set on the server.")
+
+    search_url = "https://google.serper.dev/search"
+    headers = {
+        'X-API-KEY': serper_key,
+        'Content-Type': 'application/json'
+    }
+    payload = {
+        'q': 'What is crewAI?'
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(search_url, json=payload, headers=headers)
+            response.raise_for_status()  # This will raise an error for 4xx or 5xx responses
+            return response.json()
+    except httpx.RequestError as e:
+        # This will catch any network errors (DNS, SSL, timeouts, etc.)
+        raise HTTPException(status_code=500, detail=f"HTTPX RequestError: {str(e)}")
+    except Exception as e:
+        # Catch any other unexpected errors
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
 
 @app.post("/process_lead", response_model=LeadOutput)
 async def process_lead(lead: LeadInput):
