@@ -10,3 +10,4 @@ pytest
 httpx
 pysqlite3-binary
 requests
+certifi
