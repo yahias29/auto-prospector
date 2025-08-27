@@ -1,101 +1,97 @@
 # app/main.py
-__import__('pysqlite3')
-import sys
-sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
-from .models import LeadInput, LeadOutput
-from . import database # Import the database module
-from .ai_core import enrich_lead_with_ai
 
+import os
 import requests
+import logging
+import sys
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from dotenv import load_dotenv
 
-
-app = FastAPI(
-    title="Auto-Prospector AI",
-    description="An API for enriching business leads with AI.",
-    version="0.1.0"
+# --- Detailed Logging Configuration ---
+# This forces all log messages to go to the standard output,
+# which is what Azure's Log Stream captures.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    stream=sys.stdout
 )
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    print("Startup: Creating database table...")
-    database.create_leads_table()
-    yield
-    print("Shutdown: Cleaning up...")
+# Load environment variables
+load_dotenv()
 
-app = FastAPI(
-    title="Auto-Prospector AI",
-    description="An API for enriching business leads with AI.",
-    version="0.1.0",
-    lifespan=lifespan
-)
+# Your existing Pydantic models
+class LeadInput(BaseModel):
+    profile_url: str
+    first_name: str | None = None
+    last_name: str | None = None
+    title: str | None = None
+    company: str | None = None
+
+class EnrichedData(BaseModel):
+    raw_ai_output: str
+    structured_summary: str
+
+class LeadOutput(BaseModel):
+    enriched_data: EnrichedData
+    personalized_message: str
+
+# Create FastAPI app
+app = FastAPI()
+
+# Import your AI core function AFTER configuring logging
+from .ai_core import enrich_lead_with_ai
 
 @app.get("/")
 def read_root():
-    """A simple endpoint to confirm the API is running."""
     return {"status": "API is running"}
 
-# REPLACE the old /test-serper endpoint with THIS new one
+# --- TEMPORARY TEST ENDPOINT WITH HEAVY LOGGING ---
 @app.get("/test-serper")
 def test_serper_connection():
-    """
-    A simpler, synchronous endpoint to test the outbound connection to Serper.
-    """
-    serper_key = os.getenv("SERPER_API_KEY")
-    if not serper_key:
-        raise HTTPException(status_code=500, detail="SERPER_API_KEY is not set on the server.")
-
-    search_url = "https://google.serper.dev/search"
-    headers = {
-        'X-API-KEY': serper_key,
-        'Content-Type': 'application/json'
-    }
-    payload = {
-        'q': 'What is crewAI?'
-    }
-
+    logging.info("--- /test-serper endpoint CALLED ---")
     try:
-        response = requests.post(search_url, json=payload, headers=headers)
+        logging.info("Attempting to get SERPER_API_KEY from environment...")
+        serper_key = os.getenv("SERPER_API_KEY")
+
+        if not serper_key:
+            logging.error("SERPER_API_KEY environment variable NOT FOUND.")
+            raise HTTPException(status_code=500, detail="SERPER_API_KEY is not set on the server.")
+        
+        logging.info(f"SERPER_API_KEY found. Length: {len(serper_key)}")
+
+        search_url = "https://google.serper.dev/search"
+        logging.info(f"Serper URL set to: {search_url}")
+
+        headers = {'X-API-KEY': serper_key, 'Content-Type': 'application/json'}
+        payload = {'q': 'What is crewAI?'}
+        logging.info("Headers and payload prepared.")
+
+        logging.info("Making POST request to Serper using requests library...")
+        response = requests.post(search_url, json=payload, headers=headers, timeout=20)
+        logging.info(f"Request completed with status code: {response.status_code}")
+
         response.raise_for_status()
-        return response.json()
+        logging.info("Request successful (raise_for_status passed).")
+
+        json_response = response.json()
+        logging.info("Successfully parsed JSON response from Serper.")
+        return json_response
+
     except requests.exceptions.RequestException as e:
-        # This will catch any network errors (DNS, SSL, timeouts, etc.)
+        logging.error(f"!!! A requests.exceptions.RequestException occurred: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Requests Library Error: {str(e)}")
     except Exception as e:
+        logging.error(f"!!! An UNEXPECTED Exception occurred: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
-
+# --- Your Existing Endpoint ---
 @app.post("/process_lead", response_model=LeadOutput)
-async def process_lead(lead: LeadInput):
-    """
-    Receives lead data, checks for duplicates, enriches it using AI,
-    and returns the processed lead data.
-    """
-    print(f"Received lead for processing: {lead.profile_url}")
-
-    # 1. Database check for duplicates
-    if database.check_if_lead_exists(lead.profile_url):
-        print(f"Lead is a duplicate: {lead.profile_url}")
-        # You could choose to stop here and return an error,
-        # but for this workflow, we'll still return a standard response.
-        # We just won't run the AI or save to the DB.
-        raise HTTPException(status_code=409, detail="Lead already exists in the database.")
-
-
-    # Convert the Pydantic model to a dictionary to pass to the AI
-    lead_data_dict = lead.model_dump()
-    ai_result = enrich_lead_with_ai(lead_data_dict)
-
-    # Combine all data into a single object for output and saving
-    output_data = LeadOutput(
-        **lead.model_dump(),
-        enriched_data=ai_result["enriched_data"],
-        personalized_message=ai_result["personalized_message"].raw,
-        is_new_lead=True
-    )
-    # 3. Saving the new lead to the database
-    print(f"Saving new lead to database: {lead.profile_url}")
-    database.add_lead(output_data.model_dump())
-
-    return output_data
+def process_lead(lead: LeadInput):
+    # This check prevents processing empty data
+    if not lead.profile_url:
+        raise HTTPException(status_code=400, detail="profile_url is required")
+        
+    # Your existing logic
+    result = enrich_lead_with_ai(lead.model_dump())
+    return result
