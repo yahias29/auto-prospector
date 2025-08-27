@@ -3,14 +3,49 @@ import os
 from dotenv import load_dotenv
 from crewai import Agent, Task, Crew, Process
 from langchain_openai import AzureChatOpenAI
-from crewai_tools import SerperDevTool, ScrapeWebsiteTool
+from crewai_tools import SerperDevTool
+
+# NEW: Add imports for SQLAlchemy database operations
+from sqlalchemy import create_engine, text, Table, Column, Integer, String, MetaData
 
 # Load environment variables from .env file
 load_dotenv()
 
+# --- Database Setup for Deduplication ---
+# NEW: Create the engine with a persistent file path
+engine = create_engine("sqlite:////home/site/wwwroot/leads.db")
+metadata = MetaData()
+
+# NEW: Define the 'leads' table schema
+leads_table = Table(
+    'leads', metadata,
+    Column('id', Integer, primary_key=True),
+    Column('profile_url', String, unique=True, nullable=False)
+)
+
+# NEW: Function to create the table if it doesn't exist
+def create_db_and_tables():
+    metadata.create_all(engine)
+
+# NEW: Call the function to ensure the table exists when the app starts
+create_db_and_tables()
+
+# NEW: Helper function to check if a lead exists
+def lead_exists(profile_url: str) -> bool:
+    with engine.connect() as connection:
+        query = text("SELECT 1 FROM leads WHERE profile_url = :url")
+        result = connection.execute(query, {"url": profile_url}).scalar_one_or_none()
+        return result is not None
+
+# NEW: Helper function to add a lead to the database
+def add_lead(profile_url: str):
+    with engine.connect() as connection:
+        query = text("INSERT INTO leads (profile_url) VALUES (:url)")
+        connection.execute(query, {"url": profile_url})
+        connection.commit()
+
+
 # --- LLM Configuration ---
-# Create an instance of the Azure OpenAI LLM
-# This will automatically use environment variables for keys, endpoint, etc.
 azure_llm = AzureChatOpenAI(
     openai_api_version=os.environ.get("OPENAI_API_VERSION"),
     azure_deployment=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME"),
@@ -18,11 +53,9 @@ azure_llm = AzureChatOpenAI(
 
 # --- Tool Configuration ---
 search_tool = SerperDevTool()
-scrape_tool = ScrapeWebsiteTool()
 
 # 1. Define the Agents
 # -------------------
-
 researcher_agent = Agent(
     role='Senior Business Researcher',
     goal='Find and analyze the latest news, projects, and professional background of a person.',
@@ -31,10 +64,10 @@ researcher_agent = Agent(
         "and up-to-date information on individuals and their companies. "
         "You are a master of web searches and can quickly synthesize data from various sources."
     ),
-    tools=[search_tool, scrape_tool],
+    tools=[search_tool],
     verbose=True,
     allow_delegation=False,
-    llm=azure_llm,  # Pass the Azure LLM to the agent
+    llm=azure_llm,
 )
 
 analyst_agent = Agent(
@@ -47,7 +80,7 @@ analyst_agent = Agent(
     ),
     verbose=True,
     allow_delegation=False,
-    llm=azure_llm,  # Pass the Azure LLM to the agent
+    llm=azure_llm,
 )
 
 writer_agent = Agent(
@@ -60,22 +93,22 @@ writer_agent = Agent(
     ),
     verbose=True,
     allow_delegation=False,
-    llm=azure_llm,  # Pass the Azure LLM to the agent
+    llm=azure_llm,
 )
 
 # 2. Define the Tasks
 # --------------------
-# Note: The input variables like {first_name} will be passed in when we run the crew.
-
 research_task = Task(
     description=(
-        "1. Use the website scraping tool to read the content of the LinkedIn profile URL: {profile_url}. "
-        "2. From the scraped content, identify the person's full name, current company, and professional title. "
-        "3. Use the search tool to find recent news or articles about this specific person and their company. "
-        "4. Summarize their key accomplishments, career moves, and any recent, noteworthy projects."
+        "You have been given the following information about a lead: "
+        "Name: {first_name} {last_name}, "
+        "Title: {title}, "
+        "Company: {company}. "
+        "Your task is to use the search tool to find the most recent and relevant news, articles, or projects related to this person and their company. "
+        "Focus on their key accomplishments, recent career moves, and any noteworthy company news or projects they might be involved in."
     ),
     expected_output=(
-        "A concise, 3-4 bullet point summary of the most significant and recent findings about the person, based *only* on the information from their specific LinkedIn profile and related news."
+        "A concise, 3-4 bullet point summary of the most significant and recent findings about the person and their company."
     ),
     agent=researcher_agent
 )
@@ -111,7 +144,6 @@ writing_task = Task(
 
 # 3. Assemble the Crew
 # --------------------
-
 crew = Crew(
     agents=[researcher_agent, analyst_agent, writer_agent],
     tasks=[research_task, analysis_task, writing_task],
@@ -122,48 +154,48 @@ crew = Crew(
 # 4. Create a function to run the crew
 # ------------------------------------
 
+# MODIFIED: This function now includes the deduplication logic
 def enrich_lead_with_ai(lead_input: dict) -> dict:
     """
     Takes lead input data, runs the AI crew, and returns the enriched data.
+    Includes a deduplication check to avoid processing the same lead twice.
     """
+    profile_url = lead_input.get('profile_url')
+
+    # MODIFIED: Check if the lead already exists in the database
+    if lead_exists(profile_url):
+        print(f" DUPLICATE: Lead with URL {profile_url} has already been processed.")
+        # Return a specific message for duplicates
+        return {
+            "enriched_data": {
+                "raw_ai_output": "DUPLICATE",
+                "structured_summary": "This lead has already been processed."
+            },
+            "personalized_message": "This lead is a duplicate and was not processed again."
+        }
+
     print("🤖 Kicking off AI Crew...")
 
-    # The crew.kickoff() method requires a dictionary of inputs.
-    # These keys must match the placeholders in your task descriptions.
     crew_inputs = {
-        'profile_url': lead_input.get('profile_url'),
+        'profile_url': profile_url,
         'first_name': lead_input.get('first_name'),
         'last_name': lead_input.get('last_name'),
         'title': lead_input.get('title'),
         'company': lead_input.get('company')
     }
 
-    # Run the crew and get the final output
     result = crew.kickoff(inputs=crew_inputs)
+    
+    # MODIFIED: Add the successfully processed lead to the database
+    add_lead(profile_url)
+    print(f" SUCCESS: Lead {profile_url} processed and added to the database.")
 
-    # The `crew.kickoff()` result is the output of the LAST task in the sequence.
     enriched_data = {
         "raw_ai_output": result,
-        "structured_summary": "Placeholder for structured data from AI." 
+        "structured_summary": "Placeholder for structured data from AI."
     }
 
     return {
         "enriched_data": enriched_data,
         "personalized_message": result
     }
-
-
-# --- Optional: A small test block ---
-if __name__ == '__main__':
-    print("--- Running AI Core Test ---")
-    test_lead = {
-        "profile_url": "https://www.linkedin.com/in/satyanadella/",
-        "first_name": "Satya",
-        "company": "Microsoft"
-    }
-    enriched_result = enrich_lead_with_ai(test_lead)
-    print("\n--- AI Crew Finished ---")
-    print("\nPersonalized Message:")
-    print(enriched_result['personalized_message'])
-    print("\nEnriched Data:")
-    print(enriched_result['enriched_data'])
