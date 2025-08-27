@@ -31,7 +31,13 @@ jobs:
           echo "PYTHONPATH=$PYTHONPATH:$(pwd)/.python_packages/lib/site-packages" >> $GITHUB_ENV
           echo "$(pwd)/.python_packages/lib/site-packages/bin" >> $GITHUB_PATH
           
-      - name: Run tests with pytest
+      - name: Run tests with 
+        env:
+          AZURE_API_KEY: ${{ secrets.AZURE_API_KEY }}
+          AZURE_API_BASE: ${{ secrets.AZURE_API_BASE }}
+          AZURE_API_VERSION: ${{ secrets.AZURE_API_VERSION }}
+          AZURE_DEPLOYMENT_NAME: ${{ secrets.AZURE_DEPLOYMENT_NAME }}
+          SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
         run: |
           pytest
       

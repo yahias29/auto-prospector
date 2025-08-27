@@ -8,8 +8,15 @@ from crewai_tools import SerperDevTool, ScrapeWebsiteTool
 # Load environment variables from .env file
 load_dotenv()
 
-os.environ["OPENAI_MODEL_NAME"] = "azure/gpt-5-chat"
+# --- LLM Configuration ---
+# Create an instance of the Azure OpenAI LLM
+# This will automatically use environment variables for keys, endpoint, etc.
+azure_llm = AzureChatOpenAI(
+    openai_api_version=os.environ.get("AZURE_API_VERSION"),
+    azure_deployment=os.environ.get("AZURE_DEPLOYMENT_NAME"),
+)
 
+# --- Tool Configuration ---
 search_tool = SerperDevTool()
 scrape_tool = ScrapeWebsiteTool()
 
@@ -27,6 +34,7 @@ researcher_agent = Agent(
     tools=[search_tool, scrape_tool],
     verbose=True,
     allow_delegation=False,
+    llm=azure_llm,  # Pass the Azure LLM to the agent
 )
 
 analyst_agent = Agent(
@@ -39,6 +47,7 @@ analyst_agent = Agent(
     ),
     verbose=True,
     allow_delegation=False,
+    llm=azure_llm,  # Pass the Azure LLM to the agent
 )
 
 writer_agent = Agent(
@@ -51,6 +60,7 @@ writer_agent = Agent(
     ),
     verbose=True,
     allow_delegation=False,
+    llm=azure_llm,  # Pass the Azure LLM to the agent
 )
 
 # 2. Define the Tasks
@@ -58,16 +68,16 @@ writer_agent = Agent(
 # Note: The input variables like {first_name} will be passed in when we run the crew.
 
 research_task = Task(
-  description=(
-    "1. Use the website scraping tool to read the content of the LinkedIn profile URL: {profile_url}. "
-    "2. From the scraped content, identify the person's full name, current company, and professional title. "
-    "3. Use the search tool to find recent news or articles about this specific person and their company. "
-    "4. Summarize their key accomplishments, career moves, and any recent, noteworthy projects."
-  ),
-  expected_output=(
-    "A concise, 3-4 bullet point summary of the most significant and recent findings about the person, based *only* on the information from their specific LinkedIn profile and related news."
-  ),
-  agent=researcher_agent
+    description=(
+        "1. Use the website scraping tool to read the content of the LinkedIn profile URL: {profile_url}. "
+        "2. From the scraped content, identify the person's full name, current company, and professional title. "
+        "3. Use the search tool to find recent news or articles about this specific person and their company. "
+        "4. Summarize their key accomplishments, career moves, and any recent, noteworthy projects."
+    ),
+    expected_output=(
+        "A concise, 3-4 bullet point summary of the most significant and recent findings about the person, based *only* on the information from their specific LinkedIn profile and related news."
+    ),
+    agent=researcher_agent
 )
 
 analysis_task = Task(
@@ -131,16 +141,8 @@ def enrich_lead_with_ai(lead_input: dict) -> dict:
     # Run the crew and get the final output
     result = crew.kickoff(inputs=crew_inputs)
 
-    # For now, we assume the final result is the personalized message.
     # The `crew.kickoff()` result is the output of the LAST task in the sequence.
-
-    # In a real-world scenario, you might want to parse the outputs
-    # from each agent (research, analysis, etc.) which are available
-    # in `crew.usage_metrics` or by structuring tasks differently.
-
     enriched_data = {
-        # For simplicity, we'll just put the final text in a 'raw_ai_output' key.
-        # We will also add a placeholder for structured data.
         "raw_ai_output": result,
         "structured_summary": "Placeholder for structured data from AI." 
     }
