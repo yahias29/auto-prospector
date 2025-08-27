@@ -8,7 +8,7 @@ from .models import LeadInput, LeadOutput
 from . import database # Import the database module
 from .ai_core import enrich_lead_with_ai
 
-import httpx
+import requests
 
 
 app = FastAPI(
@@ -36,11 +36,11 @@ def read_root():
     """A simple endpoint to confirm the API is running."""
     return {"status": "API is running"}
 
-# TEMPORARY TEST ENDPOINT
+# REPLACE the old /test-serper endpoint with THIS new one
 @app.get("/test-serper")
-async def test_serper_connection():
+def test_serper_connection():
     """
-    A simple endpoint to test the outbound connection to the Serper API.
+    A simpler, synchronous endpoint to test the outbound connection to Serper.
     """
     serper_key = os.getenv("SERPER_API_KEY")
     if not serper_key:
@@ -56,15 +56,13 @@ async def test_serper_connection():
     }
 
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(search_url, json=payload, headers=headers)
-            response.raise_for_status()  # This will raise an error for 4xx or 5xx responses
-            return response.json()
-    except httpx.RequestError as e:
+        response = requests.post(search_url, json=payload, headers=headers)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
         # This will catch any network errors (DNS, SSL, timeouts, etc.)
-        raise HTTPException(status_code=500, detail=f"HTTPX RequestError: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Requests Library Error: {str(e)}")
     except Exception as e:
-        # Catch any other unexpected errors
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
 
