@@ -13,7 +13,7 @@ load_dotenv()
 
 # --- Database Setup for Deduplication ---
 # NEW: Create the engine with a persistent file path
-engine = create_engine("sqlite:////home/site/wwwroot/leads.db")
+engine = create_engine("sqlite:///leads.db")
 metadata = MetaData()
 
 # NEW: Define the 'leads' table schema
