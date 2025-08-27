@@ -1,7 +1,5 @@
-fastapi==0.111.0
-uvicorn[standard]==0.30.0
-gunicorn==21.2.0
-chromadb==0.5.3
+fastapi
+uvicorn[standard]
 pydantic
 python-dotenv
 sqlalchemy
