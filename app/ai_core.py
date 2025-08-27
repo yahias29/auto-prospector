@@ -12,8 +12,8 @@ load_dotenv()
 # Create an instance of the Azure OpenAI LLM
 # This will automatically use environment variables for keys, endpoint, etc.
 azure_llm = AzureChatOpenAI(
-    openai_api_version=os.environ.get("AZURE_API_VERSION"),
-    azure_deployment=os.environ.get("AZURE_DEPLOYMENT_NAME"),
+    openai_api_version=os.environ.get("OPENAI_API_VERSION"),
+    azure_deployment=os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME"),
 )
 
 # --- Tool Configuration ---
